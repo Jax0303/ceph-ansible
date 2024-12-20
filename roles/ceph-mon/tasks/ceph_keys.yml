@@ -1,20 +1,38 @@
 ---
+- name: Ensure monitor daemon is started
+  systemd:
+    name: "ceph-mon@{{ monitor_name }}"
+    state: started
+    enabled: yes
+  when: containerized_deployment | bool
+
+- name: Wait for monitor socket to exist
+  wait_for:
+    path: "/var/run/ceph/{{ cluster }}-mon.{{ monitor_name }}.asok"
+    timeout: 30
+  when: containerized_deployment | bool
+
 - name: Waiting for the monitor(s) to form the quorum...
-  ansible.builtin.command: >
-    {{ container_exec_cmd }}
+  command: >
+    {{ container_exec_cmd | default('') }}
     ceph
     --cluster {{ cluster }}
-    daemon mon.{{ ansible_facts['hostname'] }}
+    --admin-daemon /var/run/ceph/{{ cluster }}-mon.{{ ansible_hostname }}.asok
     mon_status
     --format json
   register: ceph_health_raw
-  run_once: true
   until: >
-    (ceph_health_raw.stdout | length > 0) and (ceph_health_raw.stdout | default('{}') | from_json)['state'] in ['leader', 'peon']
-  retries: "{{ handler_health_mon_check_retries }}"
-  delay: "{{ handler_health_mon_check_delay }}"
+    (ceph_health_raw.stdout | length > 0) and
+    (ceph_health_raw.stdout | from_json).state in ['leader', 'peon']
+  retries: 20
+  delay: 10
   changed_when: false
-  when: not ansible_check_mode
+  failed_when: false
+
+- name: Show monitor status
+  debug:
+    var: ceph_health_raw.stdout
+  when: ceph_health_raw.stdout is defined
 
 - name: Fetch ceph initial keys
   ceph_key:
@@ -26,7 +44,10 @@
   environment:
     CEPH_CONTAINER_IMAGE: "{{ ceph_docker_registry + '/' + ceph_docker_image + ':' + ceph_docker_image_tag if containerized_deployment | bool else None }}"
     CEPH_CONTAINER_BINARY: "{{ container_binary }}"
-    CEPH_ROLLING_UPDATE: "{{ rolling_update }}"
+  register: key_result
+  until: key_result is success
+  retries: 5
+  delay: 10
   no_log: "{{ no_log_on_ceph_key_tasks }}"
   when:
     - cephx | bool

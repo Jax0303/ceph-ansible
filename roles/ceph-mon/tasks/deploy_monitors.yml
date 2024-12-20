@@ -2,45 +2,45 @@
 - name: Cephx related tasks
   when: cephx | bool
   block:
-    - name: Check if monitor initial keyring already exists
-      ceph_key_info:
-        name: mon.
+    - name: Clean up existing monitor keyring
+      file:
+        path: "/var/lib/ceph/tmp/{{ cluster }}.mon.keyring"
+        state: absent
+      when: cephx | bool
+
+    - name: Generate monitor key
+      ceph_key:
+        name: "mon."
+        state: generate_secret
         cluster: "{{ cluster }}"
-        user: mon.
-        user_key: "/var/lib/ceph/mon/{{ cluster }}-{{ hostvars[running_mon]['ansible_facts']['hostname'] }}/keyring"
-        output_format: json
-        state: info
-      environment:
-        CEPH_CONTAINER_IMAGE: "{{ ceph_docker_registry + '/' + ceph_docker_image + ':' + ceph_docker_image_tag if containerized_deployment | bool else None }}"
-        CEPH_CONTAINER_BINARY: "{{ container_binary }}"
       register: initial_mon_key
       run_once: true
-      delegate_to: "{{ running_mon }}"
-      failed_when: initial_mon_key.rc not in [0, 2]
-      no_log: "{{ no_log_on_ceph_key_tasks }}"
-      when: running_mon is defined
+      when: cephx | bool
 
-    - name: Generate monitor initial keyring
+    - name: Create monitor initial keyring
       ceph_key:
-        state: generate_secret
+        name: "mon."
+        state: present
+        caps:
+          mon: "allow *"
+        secret: "{{ initial_mon_key.stdout if initial_mon_key is succeeded else monitor_secret }}"
+        dest: "/var/lib/ceph/tmp/{{ cluster }}.mon.keyring"
+        containerized: "{{ containerized_deployment | bool }}"
+        container_image: "{{ ceph_docker_image_name }}"
       register: monitor_keyring
-      delegate_to: localhost
-      become: false
-      run_once: true
-      no_log: "{{ no_log_on_ceph_key_tasks }}"
-      when:
-        - initial_mon_key is skipped
-          or
-          initial_mon_key is not succeeded
+      when: cephx | bool
 
     - name: Set_fact _initial_mon_key_success
-      ansible.builtin.set_fact:  # when initial_mon_key is registered above, `rc: 2` is considered success.
+      ansible.builtin.set_fact:  
         _initial_mon_key_success: "{{ initial_mon_key is not skipped and initial_mon_key.rc == 0 }}"
 
     - name: Get initial keyring when it already exists
       ansible.builtin.set_fact:
-        monitor_keyring: "{{ (initial_mon_key.stdout | from_json)[0]['key'] if _initial_mon_key_success | bool else monitor_keyring.stdout }}"
-      when: initial_mon_key.stdout|default('')|length > 0 or monitor_keyring is not skipped
+        monitor_keyring: "{{ initial_mon_key.stdout if _initial_mon_key_success | bool else monitor_keyring.stdout }}"
+      when: 
+        - initial_mon_key is succeeded
+        - initial_mon_key.stdout is defined
+        - initial_mon_key.stdout != ''
       no_log: "{{ no_log_on_ceph_key_tasks }}"
 
     - name: Create monitor initial keyring

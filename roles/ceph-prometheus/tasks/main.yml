@@ -11,13 +11,13 @@
     - "{{ prometheus_data_dir }}"
 
 - name: Write prometheus config file
-  openstack.config_template.config_template:
+  ansible.builtin.template:
     src: prometheus.yml.j2
     dest: "{{ prometheus_conf_dir }}/prometheus.yml"
     owner: "{{ prometheus_user_id }}"
     group: "{{ prometheus_user_id }}"
     mode: "0640"
-    config_type: yaml
+  vars:
     config_overrides: "{{ prometheus_conf_overrides }}"
   notify: Service handler
 
@@ -49,13 +49,13 @@
     - "{{ alertmanager_data_dir }}"
 
 - name: Write alertmanager config file
-  openstack.config_template.config_template:
+  ansible.builtin.template:
     src: alertmanager.yml.j2
     dest: "{{ alertmanager_conf_dir }}/alertmanager.yml"
     owner: "{{ prometheus_user_id }}"
     group: "{{ prometheus_user_id }}"
     mode: "0640"
-    config_type: yaml
+  vars:
     config_overrides: "{{ alertmanager_conf_overrides }}"
   notify: Service handler
 

@@ -642,7 +642,7 @@ alertmanager_cluster_port: 9094
 alertmanager_conf_overrides: {}
 alertmanager_dashboard_api_no_ssl_verify: "{{ true if dashboard_protocol == 'https' and not dashboard_crt and not dashboard_key else false }}"
 
-no_log_on_ceph_key_tasks: true
+no_log_on_ceph_key_tasks: false
 
 ###############
 # DEPRECATION #

@@ -112,10 +112,21 @@
         - item.stdout_lines | default([]) | length > 0
 
     - name: Set_fact _container_exec_cmd
-      ansible.builtin.set_fact:
-        _container_exec_cmd: "{{ container_binary }} exec ceph-mon-{{ hostvars[groups[mon_group_name][0] if running_mon is undefined else running_mon]['ansible_facts']['hostname'] }}"
-      when:
-        - containerized_deployment | bool
+      set_fact:
+        _container_exec_cmd: >-
+          {{ container_binary_path }}
+          run
+          --rm
+          --net=host
+          --ipc=host
+          --privileged
+          -v /etc/ceph:/etc/ceph:z
+          -v /var/lib/ceph/:/var/lib/ceph/:z
+          -v /var/log/ceph/:/var/log/ceph/:z
+          -v /dev:/dev
+          -v /run/lock/lvm:/run/lock/lvm:z
+          -v /run/lvm:/run/lvm
+      when: containerized_deployment | bool
 
     # this task shouldn't run in a rolling_update situation
     # because it blindly picks a mon, which may be down because
@@ -201,7 +212,8 @@
       register: crush_rule_variable
       changed_when: false
       check_mode: false
-      failed_when: crush_rule_variable.rc not in (0, 1)
+      failed_when: crush_rule_variable.rc not in (0, 1, 2)
+      ignore_errors: true
     - &set-osd-pool-default-crush-rule-fact
       name: Set osd_pool_default_crush_rule fact
       ansible.builtin.set_fact:

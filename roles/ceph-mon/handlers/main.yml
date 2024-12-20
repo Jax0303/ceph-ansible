@@ -1,0 +1,9 @@
+---
+- name: restart ceph mons
+  systemd:
+    name: "ceph-mon@{{ monitor_name }}"
+    state: restarted
+    daemon_reload: yes
+  when:
+    - not rolling_update | default(false) | bool
+    - containerized_deployment | bool 
