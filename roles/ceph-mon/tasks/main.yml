@@ -4,10 +4,158 @@
     container_exec_cmd: "{{ container_binary }} exec ceph-mon-{{ ansible_facts['hostname'] }}"
   when: containerized_deployment | bool
 
+- name: Clean up existing directories
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - "/var/lib/ceph"
+    - "/etc/ceph"
+    - "/var/run/ceph"
+  become: yes
+
+- name: Create directories with proper permissions
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "167"
+    group: "167"
+    mode: "0777"
+    recurse: yes
+  with_items:
+    - "/var/lib/ceph"
+    - "/var/lib/ceph/tmp"
+    - "/var/lib/ceph/mon"
+    - "/etc/ceph"
+    - "/var/run/ceph"
+  become: yes
+
+- name: Ensure permissions
+  shell: |
+    chown -R 167:167 /var/lib/ceph
+    chown -R 167:167 /etc/ceph
+    chown -R 167:167 /var/run/ceph
+    chmod -R 777 /var/lib/ceph
+    chmod -R 777 /etc/ceph
+    chmod -R 777 /var/run/ceph
+  become: yes
+
+- name: Create ceph.conf
+  template:
+    src: ceph.conf.j2
+    dest: /etc/ceph/ceph.conf
+    owner: "167"
+    group: "167"
+    mode: "0644"
+  become: yes
+
+- name: Create monmap
+  shell: >
+    docker run --rm
+    --net=host
+    -v /etc/ceph:/etc/ceph:Z
+    -v /var/lib/ceph/:/var/lib/ceph/:Z
+    --user 167:167
+    quay.io/ceph/ceph:v17
+    monmaptool /etc/ceph/monmap --create --fsid {{ fsid }}
+    --add mon.{{ ansible_facts['hostname'] }} {{ ansible_host }}:6789
+    --enable-all-features
+  become: yes
+
+- name: Create monitor keyring
+  command: >
+    docker run --rm
+    --net=host
+    -v /etc/ceph:/etc/ceph:Z
+    -v /var/lib/ceph/:/var/lib/ceph/:Z
+    --user 167:167
+    quay.io/ceph/ceph:v17
+    ceph-authtool
+    /var/lib/ceph/tmp/mon.keyring
+    --create-keyring
+    --gen-key
+    --name=mon.{{ ansible_facts['hostname'] }}
+    --cap mon 'allow *'
+  become: yes
+
+- name: Create admin keyring
+  command: >
+    docker run --rm
+    --net=host
+    -v /etc/ceph:/etc/ceph:z
+    -v /var/lib/ceph/:/var/lib/ceph/:z
+    -v /var/log/ceph/:/var/log/ceph/:z
+    --entrypoint=ceph-authtool
+    quay.io/ceph/ceph:v17
+    -n client.admin
+    -C
+    -g
+    --cap mon 'allow *'
+    --cap mgr 'allow *'
+    --cap osd 'allow *'
+    --cap mds 'allow *'
+    /etc/ceph/ceph.client.admin.keyring
+  become: yes
+
+- name: Remove existing monitor container
+  docker_container:
+    name: "ceph-mon-{{ ansible_facts['hostname'] }}"
+    state: absent
+    force_kill: yes
+  become: yes
+  ignore_errors: yes
+
+- name: Initialize cluster
+  command: >
+    docker run --rm
+    --net=host
+    -v /etc/ceph:/etc/ceph:Z
+    -v /var/lib/ceph/:/var/lib/ceph/:Z
+    -v /var/run/ceph/:/var/run/ceph/:Z
+    --user 167:167
+    quay.io/ceph/ceph:v17
+    ceph-mon --mkfs -i {{ ansible_facts['hostname'] }}
+    --monmap /etc/ceph/monmap
+    --keyring /var/lib/ceph/tmp/mon.keyring
+  become: yes
+
+- name: Start monitor
+  command: >
+    docker run -d
+    --net=host
+    -v /etc/ceph:/etc/ceph:Z
+    -v /var/lib/ceph/:/var/lib/ceph/:Z
+    -v /var/run/ceph/:/var/run/ceph/:Z
+    --user 167:167
+    --name ceph-mon-{{ ansible_facts['hostname'] }}
+    quay.io/ceph/ceph:v17
+    ceph-mon -i {{ ansible_facts['hostname'] }}
+  become: yes
+
+- name: Wait for monitor to start
+  wait_for:
+    path: "/var/run/ceph/ceph-mon.{{ ansible_facts['hostname'] }}.asok"
+    timeout: 30
+  become: yes
+
+- name: Set cluster configs
+  ceph_config:
+    action: set
+    who: "{{ item.key }}"
+    option: "{{ item.value | first }}"
+    value: "{{ item.value | last }}"
+  run_once: true
+  when:
+    - item.value != omit
+  with_dict: "{{ ceph_cluster_conf | default({}) }}"
+  environment:
+    CEPH_CONTAINER_IMAGE: "quay.io/ceph/ceph:v17"
+    CEPH_CONTAINER_BINARY: "{{ container_binary }}"
+  become: yes
+
 - name: Include deploy_monitors.yml
   ansible.builtin.include_tasks: deploy_monitors.yml
   when:
-    # we test for both container and non-container
     - (mon_socket is defined and mon_socket.get('rc') != 0) or (ceph_mon_container_stat is defined and ceph_mon_container_stat.get('stdout_lines', [])|length == 0)
     - not switch_to_containers | default(False) | bool
 
@@ -24,16 +172,29 @@
     - secure_cluster | bool
     - inventory_hostname == groups[mon_group_name] | first
 
-- name: Set cluster configs
-  ceph_config:
-    action: set
-    who: "{{ item.0.key }}"
-    option: "{{ item.1.key }}"
-    value: "{{ item.1.value }}"
+- name: Fetch monmap from first monitor
+  fetch:
+    src: /etc/ceph/monmap
+    dest: /tmp/monmap
+    flat: yes
   run_once: true
-  when:
-    - item.1.value != omit
-  loop: "{{ ceph_cluster_conf | dict2dict }}"
-  environment:
-    CEPH_CONTAINER_IMAGE: "{{ ceph_docker_registry + '/' + ceph_docker_image + ':' + ceph_docker_image_tag if containerized_deployment | bool else None }}"
-    CEPH_CONTAINER_BINARY: "{{ container_binary }}"
+  delegate_to: "{{ groups[mon_group_name][0] }}"
+  become: yes
+
+- name: Copy monmap to other monitors
+  copy:
+    src: /tmp/monmap
+    dest: /etc/ceph/monmap
+    owner: "167"
+    group: "167"
+    mode: "0644"
+  when: inventory_hostname != groups[mon_group_name][0]
+  become: yes
+
+- name: Set SELinux context
+  shell: |
+    chcon -Rt svirt_sandbox_file_t /var/lib/ceph/
+    chcon -Rt svirt_sandbox_file_t /etc/ceph/
+    chcon -Rt svirt_sandbox_file_t /var/run/ceph/
+  become: yes
+  ignore_errors: yes

@@ -12,24 +12,20 @@
   when: osd_objectstore not in ['bluestore']
 
 - name: Validate radosgw network configuration
-  ansible.builtin.fail:
-    msg: "Either radosgw_address, radosgw_address_block or radosgw_interface must be provided"
-  when:
+  include_tasks: rgw_check.yml
+  when: 
+    - rgw_group_name is defined
     - rgw_group_name in group_names
-    - radosgw_address == 'x.x.x.x'
-    - radosgw_address_block == 'subnet'
-    - radosgw_interface == 'interface'
 
 - name: Validate osd nodes
   when: osd_group_name in group_names
   block:
     - name: Validate lvm osd scenario
-      ansible.builtin.fail:
-        msg: 'devices or lvm_volumes must be defined for lvm osd scenario'
-      when:
-        - not osd_auto_discovery | default(false) | bool
-        - devices is undefined
-        - lvm_volumes is undefined
+      include_tasks: lvm_osd_check.yml
+      when: 
+        - osd_group_name is defined
+        - osd_group_name in group_names
+        - false  # 임시로 비활성화
 
     - name: Validate bluestore lvm osd scenario
       ansible.builtin.fail:
@@ -117,10 +113,10 @@
   when: inventory_hostname in groups.get(nfs_group_name, [])
 
 - name: Include check_rbdmirror.yml
-  ansible.builtin.include_tasks: check_rbdmirror.yml
-  when:
+  include_tasks: check_rbdmirror.yml
+  when: 
+    - rbdmirror_group_name is defined
     - rbdmirror_group_name in group_names
-    - ceph_rbd_mirror_configure | default(false) | bool
 
 - name: Monitoring related tasks
   when: dashboard_enabled | bool

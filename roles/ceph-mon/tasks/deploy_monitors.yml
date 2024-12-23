@@ -24,7 +24,7 @@
         caps:
           mon: "allow *"
         secret: "{{ initial_mon_key.stdout if initial_mon_key is succeeded else monitor_secret }}"
-        dest: "/var/lib/ceph/tmp/{{ cluster }}.mon.keyring"
+        dest: "/var/lib/ceph/tmp/ceph.mon.keyring"
         containerized: "{{ containerized_deployment | bool }}"
         container_image: "{{ ceph_docker_image_name }}"
       register: monitor_keyring
@@ -32,7 +32,7 @@
 
     - name: Set proper ownership on monitor keyring
       file:
-        path: "/var/lib/ceph/tmp/{{ cluster }}.mon.keyring"
+        path: "/var/lib/ceph/tmp/ceph.mon.keyring"
         owner: "167"  # ceph user in container
         group: "167"  # ceph group in container
         mode: "0600"
@@ -208,3 +208,48 @@
   args:
     creates: /var/lib/ceph/mon/{{ cluster }}-{{ monitor_name }}/store.db
   when: not cephx | bool
+
+- name: Ensure ceph directories exist with proper permissions
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "167"
+    group: "167"
+    mode: "0755"
+    recurse: yes
+  with_items:
+    - "/var/lib/ceph/tmp"
+    - "/var/lib/ceph/mon"
+    - "/etc/ceph"
+
+- name: Remove existing keyring if exists
+  file:
+    path: "/var/lib/ceph/tmp/mon.keyring"
+    state: absent
+
+- name: Create monitor initial keyring
+  command: >
+    docker run --rm
+    -v /etc/ceph:/etc/ceph:z
+    -v /var/lib/ceph/:/var/lib/ceph/:z
+    --user 167:167
+    quay.io/ceph/ceph:v17
+    ceph-authtool
+    --create-keyring
+    --gen-key
+    /var/lib/ceph/tmp/mon.keyring
+    --name mon.
+    --cap mon 'allow *'
+  args:
+    creates: /var/lib/ceph/tmp/mon.keyring
+  register: monitor_keyring
+  when: cephx | bool
+
+- name: Verify keyring file
+  stat:
+    path: "/var/lib/ceph/tmp/mon.keyring"
+  register: keyring_stat
+
+- name: Show keyring file status
+  debug:
+    var: keyring_stat

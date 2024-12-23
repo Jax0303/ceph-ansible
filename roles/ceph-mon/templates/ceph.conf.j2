@@ -1,0 +1,9 @@
+[global]
+fsid = {{ fsid }}
+mon initial members = {{ groups[mon_group_name] | map('extract', hostvars, ['ansible_facts', 'hostname']) | join(',') }}
+mon host = {{ groups[mon_group_name] | map('extract', hostvars, 'ansible_host') | join(',') }}
+public network = {{ public_network }}
+cluster network = {{ cluster_network }}
+auth cluster required = cephx
+auth service required = cephx
+auth client required = cephx 
