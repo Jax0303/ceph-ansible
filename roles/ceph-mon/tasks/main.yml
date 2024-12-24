@@ -135,7 +135,7 @@
 - name: Wait for monitor to start
   wait_for:
     path: "/var/run/ceph/ceph-mon.{{ ansible_facts['hostname'] }}.asok"
-    timeout: 30
+    timeout: 3000
   become: yes
 
 - name: Set cluster configs

@@ -3,15 +3,18 @@ all:
   children:
     mons:
       hosts:
-        192.168.111.12:
-        192.168.111.13:
-        192.168.111.19:
+        192.168.111.12:  # worker02
+        192.168.111.13:  # worker03
+        192.168.111.19:  # rnd03
     osds:
       hosts:
-        192.168.111.12:
-        192.168.111.13:
-        192.168.111.19:
+        192.168.111.12:  # worker02 - /dev/sda
+        192.168.111.19:  # rnd03 - /dev/sdc, /dev/sdd
     mgrs:
       hosts:
-        192.168.111.12:
+        192.168.111.12:  # worker02
+  vars:
+    ansible_become: true
+    ansible_become_method: sudo
+    ansible_become_user: root
 
